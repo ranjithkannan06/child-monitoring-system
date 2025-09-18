@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../sign_in_screen.dart';
 import 'sign_up_screen.dart';
+import '../../utils/responsive_helper.dart';
 
 class WelcomeScreen extends StatelessWidget {
   const WelcomeScreen({Key? key}) : super(key: key);

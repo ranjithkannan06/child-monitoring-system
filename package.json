@@ -1,0 +1,22 @@
+{
+  "name": "child-safety-monitor",
+  "version": "1.0.0",
+  "description": "Child Safety Monitor - Real-time ESP32 monitoring with Firebase",
+  "scripts": {
+    "build": "flutter build web --release",
+    "dev": "flutter run -d chrome"
+  },
+  "keywords": [
+    "flutter",
+    "web",
+    "iot",
+    "esp32",
+    "firebase",
+    "child-safety"
+  ],
+  "author": "Your Name",
+  "license": "MIT",
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}

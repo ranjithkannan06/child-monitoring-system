@@ -58,7 +58,7 @@ void main() async {
     MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => authService),
-        Provider(create: (_) => notificationService),
+        ChangeNotifierProvider(create: (_) => notificationService),
         ChangeNotifierProvider(create: (_) => ThemeProvider()..load()),
         ProxyProvider<AuthService, ESP32Service?>(
           update: (_, authService, __) {

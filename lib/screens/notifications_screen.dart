@@ -7,7 +7,7 @@ class NotificationsScreen extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final service = context.watch<NotificationService>();
+    final service = context.read<NotificationService>();
     final items = service.notifications;
 
     return Scaffold(
