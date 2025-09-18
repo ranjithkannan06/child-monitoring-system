@@ -2,11 +2,12 @@ import 'dart:convert';
 import 'dart:async';
 import 'package:http/http.dart' as http;
 import '../models/sensor_data.dart';
+import '../config/env_config.dart';
 
 class ApiService {
-  // Update this with your ESP32's IP address and port
-  static const String baseUrl = 'http://YOUR_ESP32_IP';
-  static const String apiPath = '/update';
+  // ESP32 configuration from environment variables
+  static String get baseUrl => EnvConfig.esp32BaseUrl;
+  static String get apiPath => EnvConfig.esp32ApiPath;
   
   final http.Client _client = http.Client();
   

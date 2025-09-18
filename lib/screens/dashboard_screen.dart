@@ -1,7 +1,12 @@
+// lib/screens/dashboard_screen.dart
+import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:firebase_database/firebase_database.dart';
-import 'package:intl/intl.dart';
-import '../models/sensor_data.dart';
+import 'package:provider/provider.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import '../services/esp32_service.dart';
+import '../services/notification_service.dart';
+import 'profile_screen.dart';
 
 class DashboardScreen extends StatefulWidget {
   const DashboardScreen({super.key});
@@ -11,43 +16,115 @@ class DashboardScreen extends StatefulWidget {
 }
 
 class _DashboardScreenState extends State<DashboardScreen> {
-  final DatabaseReference _databaseRef = FirebaseDatabase.instance.ref("car_monitoring");
-  final _dateFormat = DateFormat('MMM d, y HH:mm:ss');
-  bool _showAlertDialog = false;
+  bool _isLoading = true;
+  String? _errorMessage;
+  StreamSubscription? _dataSubscription;
+  
+  // Notification plugin
+  final FlutterLocalNotificationsPlugin _notifications = FlutterLocalNotificationsPlugin();
+  
+  // Sensor data
+  double _temperature = 0.0;
+  double _humidity = 0.0;
+  double _gasLevel = 0.0;
 
   @override
-  void dispose() {
-    // Clean up any listeners if needed
-    super.dispose();
-  }
+  void initState() {
+    super.initState();
+    _initializeNotifications();
+    _initialize();
   }
 
-  Widget _buildSensorCard(String title, String value, String unit, IconData icon) {
-    return Card(
-      elevation: 4,
-      child: Padding(
-        padding: const EdgeInsets.all(16.0),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(icon, size: 40, color: Theme.of(context).primaryColor),
-            const SizedBox(height: 8),
-            Text(
-              title,
-              style: Theme.of(context).textTheme.titleMedium,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              '$value $unit',
-              style: Theme.of(context).textTheme.headlineSmall?.copyWith(
-                    fontWeight: FontWeight.bold,
-                    color: Theme.of(context).primaryColor,
-                  ),
-            ),
-          ],
-        ),
-      ),
+  // Initialize local notifications
+  Future<void> _initializeNotifications() async {
+    const AndroidInitializationSettings initializationSettingsAndroid =
+        AndroidInitializationSettings('@mipmap/ic_launcher');
+    
+    const InitializationSettings initializationSettings = InitializationSettings(
+      android: initializationSettingsAndroid,
     );
+    
+    await _notifications.initialize(
+      initializationSettings,
+      onDidReceiveNotificationResponse: (NotificationResponse response) {
+        // Handle notification tap
+      },
+    );
+  }
+
+  Future<void> _initialize() async {
+    try {
+      final esp32Service = context.read<ESP32Service>();
+      _setupDataListener(esp32Service);
+      
+      // Also listen to FCM messages
+      FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+        _showNotification(
+          message.notification?.title ?? 'Alert',
+          message.notification?.body ?? 'New alert from your device',
+        );
+      });
+      
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _errorMessage = e.toString();
+      });
+    }
+  }
+  
+  // Show local notification
+  Future<void> _showNotification(String title, String body) async {
+    const AndroidNotificationDetails androidPlatformChannelSpecifics =
+        AndroidNotificationDetails(
+      'high_importance_channel',
+      'High Importance Notifications',
+      channelDescription: 'This channel is used for important notifications.',
+      importance: Importance.max,
+      priority: Priority.high,
+      showWhen: true,
+    );
+
+    const NotificationDetails platformChannelSpecifics =
+        NotificationDetails(android: androidPlatformChannelSpecifics);
+
+    await _notifications.show(
+      0,
+      title,
+      body,
+      platformChannelSpecifics,
+    );
+  }
+
+  void _setupDataListener(ESP32Service service) {
+    _dataSubscription = service.getSensorDataStream.listen(
+      (data) {
+        if (mounted) {
+          setState(() {
+            _temperature = data['temperature']?.toDouble() ?? 0.0;
+            _humidity = data['humidity']?.toDouble() ?? 0.0;
+            _gasLevel = data['gas']?.toDouble() ?? 0.0;
+            _isLoading = false;
+            _errorMessage = null;
+          });
+        }
+      },
+      onError: (error) {
+        if (mounted) {
+          setState(() {
+            _isLoading = false;
+            _errorMessage = error.toString();
+          });
+        }
+      },
+    );
+  }
+  
+  @override
+  void dispose() {
+    _dataSubscription?.cancel();
+    super.dispose();
   }
 
   @override
@@ -55,467 +132,234 @@ class _DashboardScreenState extends State<DashboardScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Child Safety Monitor'),
+        backgroundColor: Colors.blue.shade800,
+        elevation: 0,
         actions: [
           IconButton(
-            icon: const Icon(Icons.refresh),
+            icon: const Icon(Icons.notifications),
             onPressed: () {
-              setState(() {}); // Force rebuild
+              // Show notifications screen
+            },
+          ),
+          IconButton(
+            icon: const Icon(Icons.person),
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => const ProfileScreen(),
+                ),
+              );
             },
           ),
         ],
       ),
-      body: StreamBuilder<DatabaseEvent>(
-        stream: _databaseRef.limitToLast(1).onValue,
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
+      body: _buildBody(),
+    );
+  }
 
-          if (snapshot.hasError) {
-            return Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Icon(Icons.error_outline, color: Colors.red, size: 60),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Error: ${snapshot.error}',
-                    style: const TextStyle(fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                ],
-              ),
-            );
-          }
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
 
-          if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-            return const Center(
-              child: Text('No data available. Waiting for sensor data...'),
-            );
-          }
+    if (_errorMessage != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Text(
+            'Error: $_errorMessage\n\nPlease check your internet connection and try again.',
+            style: const TextStyle(color: Colors.red, fontSize: 16),
+            textAlign: TextAlign.center,
+          ),
+        ),
+      );
+    }
 
-          try {
-            final data = Map<String, dynamic>.from(
-              snapshot.data!.snapshot.value as Map<dynamic, dynamic>,
-            );
-            
-            // Show alert if needed
-            final bool isAlert = data['alert'] == true;
-            if (isAlert && !_showAlertDialog) {
-              _showAlertDialog = true;
-              WidgetsBinding.instance.addPostFrameCallback((_) {
-                _showAlertDialog(context, data);
-              });
-            } else if (!isAlert) {
-              _showAlertDialog = false;
-            }
-            
-            // Main content with sensor data
-            return _buildDashboardContent(context, data);
-          } catch (e) {
-            return Center(
-              child: Text('Error displaying data: $e'),
-            );
-          }
-        },
+    return SingleChildScrollView(
+      padding: const EdgeInsets.all(16.0),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          _buildStatusCard(
+            'Temperature',
+            '${_temperature.toStringAsFixed(1)}°C',
+            _temperature > 35.0 ? Colors.red : Colors.blue,
+            Icons.thermostat,
+          ),
+          const SizedBox(height: 16),
+          _buildStatusCard(
+            'Humidity',
+            '${_humidity.toStringAsFixed(1)}%',
+            _humidity > 80.0 ? Colors.orange : Colors.green,
+            Icons.water_drop,
+          ),
+          const SizedBox(height: 16),
+          _buildStatusCard(
+            'Gas Level',
+            '${_gasLevel.toStringAsFixed(0)} PPM',
+            _gasLevel > 1000.0 ? Colors.red : Colors.green,
+            Icons.air,
+          ),
+          const SizedBox(height: 24),
+          
+          // Quick Actions
+          const Text(
+            'Quick Actions',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 16),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+            children: [
+              _buildActionButton('Alert Emergency', Icons.warning_amber, Colors.red),
+              _buildActionButton('Call Parent', Icons.phone, Colors.green),
+              _buildActionButton('View History', Icons.history, Colors.blue),
+            ],
+          ),
+          const SizedBox(height: 24),
+          
+          // Recent Alerts
+          const Text(
+            'Recent Alerts',
+            style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+          ),
+          const SizedBox(height: 8),
+          _buildAlertTile('High Temperature Alert', '2 minutes ago', Icons.warning_amber, Colors.orange),
+          _buildAlertTile('Gas Leak Detected', '10 minutes ago', Icons.dangerous, Colors.red),
+          _buildAlertTile('System Online', '1 hour ago', Icons.check_circle, Colors.green),
+        ],
       ),
     );
   }
 
-  // Build the main dashboard content
-  Widget _buildDashboardContent(BuildContext context, Map<String, dynamic> data) {
-    return StreamBuilder<DatabaseEvent>(
-      stream: _databaseRef.limitToLast(1).onValue,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState == ConnectionState.waiting) {
-          return const Center(child: CircularProgressIndicator());
-        }
-
-        if (snapshot.hasError) {
-          return Center(
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                const Icon(Icons.error_outline, color: Colors.red, size: 60),
-                const SizedBox(height: 16),
-                Text(
-                  'Error: ${snapshot.error}',
-                  style: Theme.of(context).textTheme.bodyLarge,
-                  textAlign: TextAlign.center,
-                ),
-              ],
+  Widget _buildStatusCard(String title, String value, Color color, IconData icon) {
+    return Card(
+      elevation: 4,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Row(
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: Icon(icon, color: color, size: 28),
             ),
-          );
-        }
-
-        if (!snapshot.hasData || snapshot.data!.snapshot.value == null) {
-          return const Center(
-            child: Text('No data available. Waiting for sensor data...'),
-          );
-        }
-
-        try {
-          final data = Map<String, dynamic>.from(
-            snapshot.data!.snapshot.value as Map<dynamic, dynamic>,
-          );
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(16.0),
-            child: Column(
+            const SizedBox(width: 16),
+            Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                // Alert Banner
-                if (data['alert'] == true)
-                  Container(
-                    width: double.infinity,
-                    padding: const EdgeInsets.all(12.0),
-                    margin: const EdgeInsets.only(bottom: 16.0),
-                    decoration: BoxDecoration(
-                      color: Colors.red.shade100,
-                      borderRadius: BorderRadius.circular(8.0),
-                      border: Border.all(color: Colors.red.shade400),
-                    ),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.warning_amber_rounded, color: Colors.red),
-                        SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'ALERT: Child detected with high temperature!',
-                            style: TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-
-                // Sensor Data List
-                Card(
-                  child: ListView(
-                    shrinkWrap: true,
-                    physics: const NeverScrollableScrollPhysics(),
-                    children: [
-                      ListTile(
-                        leading: const Icon(Icons.thermostat),
-                        title: const Text('Temperature'),
-                        trailing: Text(
-                          '${(data['temperature'] as num?)?.toStringAsFixed(1) ?? 'N/A'} °C',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.water_drop),
-                        title: const Text('Humidity'),
-                        trailing: Text(
-                          '${(data['humidity'] as num?)?.toStringAsFixed(1) ?? 'N/A'} %',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: const Icon(Icons.monitor_weight),
-                        title: const Text('Weight'),
-                        trailing: Text(
-                          '${(data['weight'] as num?)?.toStringAsFixed(2) ?? 'N/A'} kg',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                      ),
-                      const Divider(height: 1),
-                      ListTile(
-                        leading: Icon(
-                          data['ai_result'] == 'child' 
-                              ? Icons.child_care 
-                              : Icons.person_off,
-                          color: data['ai_result'] == 'child' ? Colors.blue : Colors.grey,
-                        ),
-                        title: const Text('Status'),
-                        trailing: data['alert'] == true
-                            ? const Icon(Icons.warning, color: Colors.red)
-                            : null,
-                        subtitle: Text(
-                          data['ai_result'] == 'child' 
-                              ? 'Child Detected' 
-                              : 'No Child',
-                        ),
-                      ),
-                    ],
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 16,
+                    color: Colors.grey,
                   ),
                 ),
-
-                // Last Updated
-                Padding(
-                  padding: const EdgeInsets.only(top: 16.0),
-                  child: Text(
-                    'Last updated: ${_dateFormat.format(DateTime.now())}',
-                    style: TextStyle(
-                      color: Colors.grey[600],
-                      fontSize: 12,
-  Widget _buildDashboardContent(BuildContext context, Map<String, dynamic> data) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Alert Banner
-          if (data['alert'] == true)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12.0),
-              margin: const EdgeInsets.only(bottom: 16.0),
-              decoration: BoxDecoration(
-                color: Colors.red.shade100,
-                borderRadius: BorderRadius.circular(8.0),
-                border: Border.all(color: Colors.red.shade400),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.red),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'ALERT: Child detected with high temperature!',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          // Sensor Data List
-          Card(
-            child: ListView(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.thermostat),
-                  title: const Text('Temperature'),
-                  trailing: Text(
-                    '${(data['temperature'] as num?)?.toStringAsFixed(1) ?? 'N/A'} °C',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.water_drop),
-                  title: const Text('Humidity'),
-                  trailing: Text(
-                    '${(data['humidity'] as num?)?.toStringAsFixed(1) ?? 'N/A'} %',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.monitor_weight),
-                  title: const Text('Weight'),
-                  trailing: Text(
-                    '${(data['weight'] as num?)?.toStringAsFixed(2) ?? 'N/A'} kg',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: Icon(
-                    data['ai_result'] == 'child' 
-                        ? Icons.child_care 
-                        : Icons.person_off,
-                    color: data['ai_result'] == 'child' ? Colors.blue : Colors.grey,
-                  ),
-                  title: const Text('Status'),
-                  trailing: data['alert'] == true
-                      ? const Icon(Icons.warning, color: Colors.red)
-                      : null,
-                  subtitle: Text(
-                    data['ai_result'] == 'child' 
-                        ? 'Child Detected' 
-                        : 'No Child',
+                const SizedBox(height: 4),
+                Text(
+                  value,
+                  style: const TextStyle(
+                    fontSize: 24,
+                    fontWeight: FontWeight.bold,
                   ),
                 ),
               ],
             ),
-          ),
-
-          // Last Updated
-          Padding(
-            padding: const EdgeInsets.only(top: 16.0),
-            child: Text(
-              'Last updated: ${_dateFormat.format(DateTime.now())}',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  // Build the main dashboard content
-  Widget _buildDashboardContent(BuildContext context, Map<String, dynamic> data) {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16.0),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Alert Banner
-          if (data['alert'] == true)
-            Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(12.0),
-              margin: const EdgeInsets.only(bottom: 16.0),
-              decoration: BoxDecoration(
-                color: Colors.red.shade100,
-                borderRadius: BorderRadius.circular(8.0),
-                border: Border.all(color: Colors.red.shade400),
-              ),
-              child: const Row(
-                children: [
-                  Icon(Icons.warning_amber_rounded, color: Colors.red),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'ALERT: Child detected with high temperature!',
-                      style: TextStyle(
-                        color: Colors.red,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-
-          // Sensor Data List
-          Card(
-            child: ListView(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.thermostat),
-                  title: const Text('Temperature'),
-                  trailing: Text(
-                    '${(data['temperature'] as num?)?.toStringAsFixed(1) ?? 'N/A'} °C',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.water_drop),
-                  title: const Text('Humidity'),
-                  trailing: Text(
-                    '${(data['humidity'] as num?)?.toStringAsFixed(1) ?? 'N/A'} %',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: const Icon(Icons.monitor_weight),
-                  title: const Text('Weight'),
-                  trailing: Text(
-                    '${(data['weight'] as num?)?.toStringAsFixed(2) ?? 'N/A'} kg',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.bold,
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                ListTile(
-                  leading: Icon(
-                    data['ai_result'] == 'child' 
-                        ? Icons.child_care 
-                        : Icons.person_off,
-                    color: data['ai_result'] == 'child' ? Colors.blue : Colors.grey,
-                  ),
-                  title: const Text('Status'),
-                  trailing: data['alert'] == true
-                      ? const Icon(Icons.warning, color: Colors.red)
-                      : null,
-                  subtitle: Text(
-                    data['ai_result'] == 'child' 
-                        ? 'Child Detected' 
-                        : 'No Child',
-                  ),
-                ),
-              ],
-            ),
-          ),
-
-          // Last Updated
-          Padding(
-            padding: const EdgeInsets.only(top: 16.0),
-            child: Text(
-              'Last updated: ${_dateFormat.format(DateTime.now())}',
-              style: TextStyle(
-                color: Colors.grey[600],
-                fontSize: 12,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  void _showAlertDialog(BuildContext context, Map<String, dynamic> data) {
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (context) => AlertDialog(
-        title: const Text('⚠️ ALERT!'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const Text('Child detected with high temperature!'),
-            const SizedBox(height: 8),
-            Text('Temperature: ${(data['temperature'] as num?)?.toStringAsFixed(1) ?? 'N/A'}°C'),
-            Text('Humidity: ${(data['humidity'] as num?)?.toStringAsFixed(1) ?? 'N/A'}%'),
-            Text('Weight: ${(data['weight'] as num?)?.toStringAsFixed(2) ?? 'N/A'} kg'),
-            const SizedBox(height: 8),
-            const Text('Please check the vehicle immediately!', style: TextStyle(fontWeight: FontWeight.bold)),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(),
-            child: const Text('OK'),
+      ),
+    );
+  }
+  
+  Widget _buildActionButton(String label, IconData icon, Color color) {
+    return Column(
+      children: [
+        Container(
+          padding: const EdgeInsets.all(12),
+          decoration: BoxDecoration(
+            color: color.withOpacity(0.1),
+            shape: BoxShape.circle,
           ),
+          child: Icon(icon, color: color, size: 24),
+        ),
+        const SizedBox(height: 8),
+        Text(
+          label,
+          style: const TextStyle(fontSize: 12),
+          textAlign: TextAlign.center,
+        ),
+      ],
+    );
+  }
+  
+  Widget _buildAlertTile(String title, String subtitle, IconData icon, Color color) {
+    return ListTile(
+      leading: Icon(icon, color: color),
+      title: Text(title, style: const TextStyle(fontWeight: FontWeight.w500)),
+      subtitle: Text(subtitle, style: const TextStyle(fontSize: 12)),
+      trailing: const Icon(Icons.chevron_right, color: Colors.grey),
+      contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+      onTap: () {
+        // Handle alert tap
+      },
+    );
+  }
+
+  Widget _buildLoadingIndicator() {
+    return const Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          CircularProgressIndicator(),
+          SizedBox(height: 16),
+          Text('Loading sensor data...', style: TextStyle(fontSize: 16)),
+          Text('Connecting to device...'),
         ],
       ),
     );
+  }
+
+  Widget _buildErrorView(String message) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            const Icon(Icons.error_outline, size: 64, color: Colors.red),
+            const SizedBox(height: 16),
+            const Text(
+              'Error',
+              style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              message,
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: _retry,
+              child: const Text('Retry'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _retry() {
+    setState(() {
+      _isLoading = true;
+      _errorMessage = null;
+    });
+    _initialize();
   }
 }

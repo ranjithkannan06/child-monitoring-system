@@ -5,18 +5,21 @@
 #include <SoftwareSerial.h>
 #include "esp_camera.h"
 
-// ---------------- WIFI ----------------
-const char* ssid = "Redmi note 13 pro";
-const char* password = "";
+// Include the configuration
+#include "config.h"
 
-// ---------------- App API (your server or Firebase) ----------------
-String app_api_url = "https://your-server.com/update"; // Replace with your app’s API
+// WiFi Configuration
+const char* ssid = WIFI_SSID;
+const char* password = WIFI_PASSWORD;
 
-// ---------------- Roboflow API ----------------
-String roboflow_api_key = "";
-String roboflow_model_url = "https://detect.roboflow.com/child-monitoring/1"; // Example
+// App API Configuration
+const char* app_api_url = SERVER_API_URL;
 
-// ---------------- GSM ----------------
+// Roboflow Configuration
+const char* roboflow_api_key = ROBOFLOW_API_KEY;
+const char* roboflow_model_url = ROBOFLOW_MODEL_URL;
+
+// GSM Configuration
 #define GSM_RX 16
 #define GSM_TX 17
 SoftwareSerial gsm(GSM_RX, GSM_TX);
