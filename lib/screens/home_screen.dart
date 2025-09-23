@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import '../services/auth_service.dart';
+import '../config/env_config.dart';
+import '../widgets/mjpeg_view.dart';
 import '../theme/theme_provider.dart';
 import 'notifications_screen.dart';
 
@@ -46,8 +48,41 @@ class HomeScreen extends StatelessWidget {
           ),
         ],
       ),
-      body: Center(
-        child: Column(
+      body: LayoutBuilder(
+        builder: (context, constraints) {
+          final cameraUrl = Uri.parse(EnvConfig.esp32BaseUrl + EnvConfig.esp32StreamPath).toString();
+          final isWide = constraints.maxWidth >= 900;
+          final infoPanel = _buildInfoPanel(context, user);
+          final cameraPanel = _buildCameraPanel(cameraUrl);
+
+          if (isWide) {
+            return Row(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Expanded(flex: 3, child: infoPanel),
+                const VerticalDivider(width: 1),
+                Expanded(flex: 4, child: cameraPanel),
+              ],
+            );
+          }
+
+          return SingleChildScrollView(
+            child: Column(
+              children: [
+                infoPanel,
+                const Divider(height: 1),
+                SizedBox(height: 300, child: cameraPanel),
+              ],
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildInfoPanel(BuildContext context, user) {
+    return Center(
+      child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
             if (user?.photoURL != null)
@@ -109,6 +144,19 @@ class HomeScreen extends StatelessWidget {
               },
             ),
           ],
+        ),
+    );
+  }
+
+  Widget _buildCameraPanel(String streamUrl) {
+    return Container(
+      color: Colors.black,
+      alignment: Alignment.center,
+      child: AspectRatio(
+        aspectRatio: 4 / 3,
+        child: ClipRRect(
+          borderRadius: BorderRadius.circular(8),
+          child: MjpegView(streamUrl: streamUrl),
         ),
       ),
     );

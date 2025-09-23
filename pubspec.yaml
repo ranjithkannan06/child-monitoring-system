@@ -1,12 +1,12 @@
 name: child_safety_monitor
 description: A Flutter app to monitor child safety in vehicles using ESP32
 
-publish_to: 'none'
+publish_to: "none"
 
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.0.0 <4.0.0'
+  sdk: ">=3.0.0 <4.0.0"
 
 dependencies:
   flutter:
@@ -31,8 +31,8 @@ dependencies:
   flutter_animate: ^4.2.0
   connectivity_plus: ^6.1.5
   shared_preferences: ^2.2.2
-  timezone: ^0.9.4  # For timezone support in notifications
-  intl: ^0.20.2    # For date/time formatting
+  timezone: ^0.9.4 # For timezone support in notifications
+  intl: ^0.20.2 # For date/time formatting
   flutter_local_notifications_linux: ^4.0.0
   flutter_local_notifications_platform_interface: ^7.1.2
   flutter_dotenv: ^6.0.0
@@ -44,7 +44,7 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
-  
+
   # Add assets
   assets:
     - assets/images/google_logo.png

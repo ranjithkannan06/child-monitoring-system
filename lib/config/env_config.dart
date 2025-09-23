@@ -17,6 +17,8 @@ class EnvConfig {
   // ESP32 Configuration
   static String get esp32BaseUrl => dotenv.env['ESP32_BASE_URL'] ?? 'http://YOUR_ESP32_IP';
   static String get esp32ApiPath => dotenv.env['ESP32_API_PATH'] ?? '/update';
+  static String get esp32StreamPath => dotenv.env['ESP32_STREAM_PATH'] ?? '/stream';
+  static String get esp32SnapshotPath => dotenv.env['ESP32_SNAPSHOT_PATH'] ?? '/capture';
 
   // App Configuration
   static String get appTitle => dotenv.env['APP_TITLE'] ?? 'Child Safety Monitor';
