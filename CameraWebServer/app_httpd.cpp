@@ -57,6 +57,62 @@ typedef struct {
 
 static ra_filter_t ra_filter;
 
+// -----------------------------
+// Simple rolling logs buffer
+// -----------------------------
+typedef struct {
+  uint32_t ts_ms;
+  char msg[128];
+} log_entry_t;
+
+static log_entry_t s_logs[50];
+static size_t s_log_head = 0;
+static size_t s_log_count = 0;
+
+extern "C" void add_log(const char *message) {
+  if (!message) return;
+  size_t idx = s_log_head;
+  s_logs[idx].ts_ms = (uint32_t)(esp_timer_get_time() / 1000ULL);
+  strncpy(s_logs[idx].msg, message, sizeof(s_logs[idx].msg) - 1);
+  s_logs[idx].msg[sizeof(s_logs[idx].msg) - 1] = '\0';
+  s_log_head = (s_log_head + 1) % (sizeof(s_logs) / sizeof(s_logs[0]));
+  if (s_log_count < (sizeof(s_logs) / sizeof(s_logs[0]))) {
+    s_log_count++;
+  }
+}
+
+static esp_err_t logs_handler(httpd_req_t *req) {
+  // Return JSON array of recent logs: [{ts:123, msg:"..."}, ...]
+  httpd_resp_set_type(req, "application/json");
+  httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
+
+  char buf[256];
+  httpd_resp_sendstr_chunk(req, "[");
+  for (size_t i = 0; i < s_log_count; i++) {
+    size_t idx = (s_log_head + (sizeof(s_logs) / sizeof(s_logs[0])) - s_log_count + i) % (sizeof(s_logs) / sizeof(s_logs[0]));
+    int n = snprintf(buf, sizeof(buf), "%s{\"ts\":%lu,\"msg\":\"",
+                     (i == 0 ? "" : ","), (unsigned long)s_logs[idx].ts_ms);
+    httpd_resp_send_chunk(req, buf, n);
+    // escape quotes and backslashes minimally
+    const char *m = s_logs[idx].msg;
+    while (*m) {
+      char c = *m++;
+      if (c == '"' || c == '\\') {
+        char esc[2] = {'\\', c};
+        httpd_resp_send_chunk(req, esc, 2);
+      } else if ((unsigned char)c < 0x20) {
+        char rep = ' ';
+        httpd_resp_send_chunk(req, &rep, 1);
+      } else {
+        httpd_resp_send_chunk(req, &c, 1);
+      }
+    }
+    httpd_resp_sendstr_chunk(req, "\"}");
+  }
+  httpd_resp_sendstr_chunk(req, "]");
+  return httpd_resp_sendstr_chunk(req, NULL);
+}
+
 static ra_filter_t *ra_filter_init(ra_filter_t *filter, size_t sample_size) {
   memset(filter, 0, sizeof(ra_filter_t));
 
@@ -736,6 +792,19 @@ void startCameraServer() {
 #endif
   };
 
+  httpd_uri_t logs_uri = {
+    .uri = "/logs",
+    .method = HTTP_GET,
+    .handler = logs_handler,
+    .user_ctx = NULL
+#ifdef CONFIG_HTTPD_WS_SUPPORT
+    ,
+    .is_websocket = true,
+    .handle_ws_control_frames = false,
+    .supported_subprotocol = NULL
+#endif
+  };
+
   httpd_uri_t bmp_uri = {
     .uri = "/bmp",
     .method = HTTP_GET,
@@ -829,6 +898,7 @@ void startCameraServer() {
     httpd_register_uri_handler(camera_httpd, &greg_uri);
     httpd_register_uri_handler(camera_httpd, &pll_uri);
     httpd_register_uri_handler(camera_httpd, &win_uri);
+    httpd_register_uri_handler(camera_httpd, &logs_uri);
   }
 
   config.server_port += 1;
